@@ -1,0 +1,13 @@
+Fixed example path in man pages
+
+--- a/smartd.conf.5.in
++++ b/smartd.conf.5.in
+@@ -1599,7 +1599,7 @@
+ .fi
+ 
+ Some example scripts are distributed with the smartmontools package,
+-in /usr/local/share/doc/smartmontools/examplescripts/.
++in /usr/local/share/doc/smartmontools/examples/.
+ 
+ Please note that these scripts typically run as root, so any files
+ that they read/write should not be writable by ordinary users or

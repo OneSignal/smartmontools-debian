@@ -1,0 +1,48 @@
+Author: Matt Taggart <taggart@debian.org>
+Subject: Update cciss examples/docs
+
+Here is a patch that adds examples for cciss to the default smartd.conf
+file and adds some more cciss documentation to the manpages. I think this
+patch gets things to parity with the 3ware documentation with a couple
+minor exceptions
+
+--- a/smartd.conf
++++ b/smartd.conf
+@@ -92,6 +92,12 @@
+ # NOTE: On Windows, DEVICESCAN works also for 3ware controllers.
+ #/dev/hdc,0 -a -s L/../../2/01
+ #/dev/hdc,1 -a -s L/../../2/03
++#
++# Monitor 2 disks connected to the first HP SmartArray controller which
++# uses the cciss driver. Start long tests on Sunday nights and short
++# self-tests every night and send errors to root
++#/dev/cciss/c0d0 -d cciss,0 -a -s (L/../../7/02|S/../.././02) -m root
++#/dev/cciss/c0d0 -d cciss,1 -a -s (L/../../7/03|S/../.././03) -m root
+ 
+ # Monitor 3 ATA disks directly connected to a HighPoint RocketRAID. Start long
+ # self-tests Sundays between 1-2, 2-3, and 3-4 am. 
+--- a/smartd.conf.5.in
++++ b/smartd.conf.5.in
+@@ -157,6 +157,12 @@
+ .B \ \ /dev/tws0 \-d 3ware,1 \-a \-s L/../../7/02
+ .\" %ENDIF OS FreeBSD
+ .B #
++.B # Monitor 2 disks connected to the first HP SmartArray controller which
++.B # uses the cciss driver. Start long tests on Sunday nights and short
++.B # self-tests every night and send errors to root
++.B \ \ /dev/cciss/c0d0 -d cciss,0 -a -s (L/../../7/02|S/../.././02) -m root
++.B \ \ /dev/cciss/c0d0 -d cciss,1 -a -s (L/../../7/03|S/../.././03) -m root
++.B #
+ .B # Three SATA disks on a HighPoint RocketRAID controller.
+ .B # Start short self-tests daily between 1\(en2, 2\(en3, and
+ .B # 3\(en4 am.
+@@ -1492,6 +1498,9 @@
+ If you want more frequent information, use:
+ .B \-a.
+ 
++.B If a cciss controller is used
++then the corresponding block device (/dev/cciss/c?d?) must be listed,
++along with the \'\-d cciss,N\' Directive (see below).
+ .TP
+ .B ADDITIONAL DETAILS ABOUT DEVICESCAN
+ If a non-comment entry in the configuration file is the text

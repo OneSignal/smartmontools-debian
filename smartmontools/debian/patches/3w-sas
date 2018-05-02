@@ -1,0 +1,405 @@
+Author: chrfranke <chrfranke@4ea69e1a-61f1-4043-bf83-b5c94c648137>
+Date:   Tue Jul 27 13:08:31 2010 +0000
+
+    Linux: Support SATA drives on LSI 3ware 9750 controllers (ticket #86).
+    
+Index: smartmontools-5.39.1+svn3124/CHANGELOG
+===================================================================
+--- smartmontools-5.39.1+svn3124.orig/CHANGELOG	2010-07-12 21:21:00.000000000 +0200
++++ smartmontools-5.39.1+svn3124/CHANGELOG	2010-12-23 11:05:12.103063859 +0100
+@@ -86,6 +86,10 @@
+        This fixes build on QNX (ticket #1).
+        Thanks to Stefan (stevestereo) for testing.
+ 
++  [CF] Linux: Support SATA drives on LSI 3ware 9750 controllers.
++       Patch provided by Victor Payno (ticket #86).
++       Modified to avoid duplicate code.
++
+   [CF] drivedb.h update:
+        - WD Caviar Green (Adv. Format) family
+ 
+Index: smartmontools-5.39.1+svn3124/NEWS
+===================================================================
+--- smartmontools-5.39.1+svn3124.orig/NEWS	2010-06-11 18:21:25.000000000 +0200
++++ smartmontools-5.39.1+svn3124/NEWS	2010-12-23 11:05:12.103063859 +0100
+@@ -22,6 +22,7 @@
+   SCT Error Recovery Control time limit.
+ - smartctl options '--scan, --scan-open'.
+ - Linux: Add '/dev/sd[a-c][a-z]' to smartd DEVICESCAN.
++- Linux: Support SATA drives on LSI 3ware 9750 controllers.
+ - Windows: Read 'drivedb.h' and 'smartd.conf' from exe directory.
+ - Windows: Support for 64-bit executables.
+ - Windows: Support for cross compilation on Linux.
+Index: smartmontools-5.39.1+svn3124/os_linux.cpp
+===================================================================
+--- smartmontools-5.39.1+svn3124.orig/os_linux.cpp	2010-04-30 19:35:35.000000000 +0200
++++ smartmontools-5.39.1+svn3124/os_linux.cpp	2010-12-23 11:05:12.103063859 +0100
+@@ -196,6 +196,7 @@
+ 		  "  smartctl --all --device=3ware,2 /dev/sda\n"
+ 		  "  smartctl --all --device=3ware,2 /dev/twe0\n"
+ 		  "  smartctl --all --device=3ware,2 /dev/twa0\n"
++		  "  smartctl --all --device=3ware,2 /dev/twl0\n"
+ 		  "          (Prints all SMART info for 3rd ATA disk on 3ware RAID controller)\n"
+ 		  "  smartctl --all --device=hpt,1/1/3 /dev/sda\n"
+ 		  "          (Prints all SMART info for the SATA disk attached to the 3rd PMPort\n"
+@@ -1216,7 +1217,8 @@
+   enum escalade_type_t {
+     AMCC_3WARE_678K,
+     AMCC_3WARE_678K_CHAR,
+-    AMCC_3WARE_9000_CHAR
++    AMCC_3WARE_9000_CHAR,
++    AMCC_3WARE_9700_CHAR
+   };
+ 
+   linux_escalade_device(smart_interface * intf, const char * dev_name,
+@@ -1389,12 +1391,17 @@
+ 
+ bool linux_escalade_device::open()
+ {
+-  if (m_escalade_type == AMCC_3WARE_9000_CHAR || m_escalade_type == AMCC_3WARE_678K_CHAR) {
++  if (m_escalade_type == AMCC_3WARE_9700_CHAR || m_escalade_type == AMCC_3WARE_9000_CHAR ||
++      m_escalade_type == AMCC_3WARE_678K_CHAR) {
+     // the device nodes for these controllers are dynamically assigned,
+     // so we need to check that they exist with the correct major
+     // numbers and if not, create them
+-    const char * node   = (m_escalade_type == AMCC_3WARE_9000_CHAR ? "twa"    : "twe"    );
+-    const char * driver = (m_escalade_type == AMCC_3WARE_9000_CHAR ? "3w-9xxx": "3w-xxxx");
++    const char * node   = (m_escalade_type == AMCC_3WARE_9700_CHAR ? "twl"     :
++                           m_escalade_type == AMCC_3WARE_9000_CHAR ? "twa"     :
++                                                                     "twe"      );
++    const char * driver = (m_escalade_type == AMCC_3WARE_9700_CHAR ? "3w-sas"  :
++                           m_escalade_type == AMCC_3WARE_9000_CHAR ? "3w-9xxx" :
++                                                                     "3w-xxxx"  );
+     if (setup_3ware_nodes(node, driver))
+       return set_err((errno ? errno : ENXIO), "setup_3ware_nodes(\"%s\", \"%s\") failed", node, driver);
+   }
+@@ -1461,7 +1468,7 @@
+   memset(ioctl_buffer, 0, TW_IOCTL_BUFFER_SIZE);
+ 
+   // TODO: Handle controller differences by different classes
+-  if (m_escalade_type==AMCC_3WARE_9000_CHAR) {
++  if (m_escalade_type == AMCC_3WARE_9700_CHAR || m_escalade_type == AMCC_3WARE_9000_CHAR) {
+     tw_ioctl_apache                               = (TW_Ioctl_Buf_Apache *)ioctl_buffer;
+     tw_ioctl_apache->driver_command.control_code  = TW_IOCTL_FIRMWARE_PASS_THROUGH;
+     tw_ioctl_apache->driver_command.buffer_length = 512; /* payload size */
+@@ -1523,7 +1530,8 @@
+     // in dwords by 1 to account for the 64-bit single sgl 'address'
+     // field. Note that this doesn't agree with the typedefs but it's
+     // right (agree with kernel driver behavior/typedefs).
+-    if (m_escalade_type==AMCC_3WARE_9000_CHAR && sizeof(long)==8)
++    if ((m_escalade_type == AMCC_3WARE_9700_CHAR || m_escalade_type == AMCC_3WARE_9000_CHAR)
++        && sizeof(long) == 8)
+       passthru->size++;
+   }
+   else if (in.direction == ata_cmd_in::no_data) {
+@@ -1535,7 +1543,7 @@
+     passthru->sector_count = 0x0;
+   }
+   else if (in.direction == ata_cmd_in::data_out) {
+-    if (m_escalade_type == AMCC_3WARE_9000_CHAR)
++    if (m_escalade_type == AMCC_3WARE_9700_CHAR || m_escalade_type == AMCC_3WARE_9000_CHAR)
+       memcpy(tw_ioctl_apache->data_buffer, in.buffer, in.size);
+     else if (m_escalade_type == AMCC_3WARE_678K_CHAR)
+       memcpy(tw_ioctl_char->data_buffer,   in.buffer, in.size);
+@@ -1548,7 +1556,8 @@
+     passthru->byte0.sgloff = 0x5;
+     passthru->size         = 0x7;  // TODO: Other value for multi-sector ?
+     passthru->param        = 0xF;  // PIO data write
+-    if (m_escalade_type==AMCC_3WARE_9000_CHAR && sizeof(long)==8)
++    if ((m_escalade_type == AMCC_3WARE_9700_CHAR || m_escalade_type == AMCC_3WARE_9000_CHAR)
++        && sizeof(long) == 8)
+       passthru->size++;
+   }
+   else
+@@ -1556,7 +1565,7 @@
+ 
+   // Now send the command down through an ioctl()
+   int ioctlreturn;
+-  if (m_escalade_type==AMCC_3WARE_9000_CHAR)
++  if (m_escalade_type == AMCC_3WARE_9700_CHAR || m_escalade_type == AMCC_3WARE_9000_CHAR)
+     ioctlreturn=ioctl(get_fd(), TW_IOCTL_FIRMWARE_PASS_THROUGH, tw_ioctl_apache);
+   else if (m_escalade_type==AMCC_3WARE_678K_CHAR)
+     ioctlreturn=ioctl(get_fd(), TW_CMD_PACKET_WITH_DATA, tw_ioctl_char);
+@@ -1607,7 +1616,7 @@
+ 
+   // If this is a read data command, copy data to output buffer
+   if (readdata) {
+-    if (m_escalade_type==AMCC_3WARE_9000_CHAR)
++    if (m_escalade_type == AMCC_3WARE_9700_CHAR || m_escalade_type == AMCC_3WARE_9000_CHAR)
+       memcpy(in.buffer, tw_ioctl_apache->data_buffer, in.size);
+     else if (m_escalade_type==AMCC_3WARE_678K_CHAR)
+       memcpy(in.buffer, tw_ioctl_char->data_buffer, in.size);
+@@ -2695,7 +2704,7 @@
+     if (!memcmp(req_buff + 8, "3ware", 5) || !memcmp(req_buff + 8, "AMCC", 4)) {
+       close();
+       set_err(EINVAL, "AMCC/3ware controller, please try adding '-d 3ware,N',\n"
+-                      "you may need to replace %s with /dev/twaN or /dev/tweN", get_dev_name());
++                      "you may need to replace %s with /dev/twlN, /dev/twaN or /dev/tweN", get_dev_name());
+       return this;
+     }
+ 
+@@ -2997,6 +3006,7 @@
+ static const char * lin_dev_scsi_tape1 = "ns";
+ static const char * lin_dev_scsi_tape2 = "os";
+ static const char * lin_dev_scsi_tape3 = "nos";
++static const char * lin_dev_3ware_9700_char = "twl";
+ static const char * lin_dev_3ware_9000_char = "twa";
+ static const char * lin_dev_3ware_678k_char = "twe";
+ static const char * lin_dev_cciss_dir = "cciss/";
+@@ -3080,6 +3090,11 @@
+                strlen(lin_dev_scsi_tape3)))
+     return new linux_scsi_device(this, name, "");
+ 
++  // form /dev/twl*
++  if (!strncmp(lin_dev_3ware_9700_char, dev_name,
++               strlen(lin_dev_3ware_9700_char)))
++    return missing_option("-d 3ware,N");
++
+   // form /dev/twa*
+   if (!strncmp(lin_dev_3ware_9000_char, dev_name,
+                strlen(lin_dev_3ware_9000_char)))
+@@ -3122,7 +3137,9 @@
+       return 0;
+     }
+ 
+-    if (!strncmp(name, "/dev/twa", 8))
++    if (!strncmp(name, "/dev/twl", 8))
++      return new linux_escalade_device(this, name, linux_escalade_device::AMCC_3WARE_9700_CHAR, disknum);
++    else if (!strncmp(name, "/dev/twa", 8))
+       return new linux_escalade_device(this, name, linux_escalade_device::AMCC_3WARE_9000_CHAR, disknum);
+     else if (!strncmp(name, "/dev/twe", 8))
+       return new linux_escalade_device(this, name, linux_escalade_device::AMCC_3WARE_678K_CHAR, disknum);
+Index: smartmontools-5.39.1+svn3124/smartctl.8.in
+===================================================================
+--- smartmontools-5.39.1+svn3124.orig/smartctl.8.in	2010-06-11 18:21:25.000000000 +0200
++++ smartmontools-5.39.1+svn3124/smartctl.8.in	2010-12-23 11:05:12.103063859 +0100
+@@ -65,7 +65,7 @@
+ \fB"/dev/sg*"\fP.  For SATA disks accessed with libata, use
+ \fB"/dev/sd[a\-z]"\fP and append \fB"\-d ata"\fP. For disks behind
+ 3ware controllers you may need \fB"/dev/sd[a\-z]"\fP or
+-\fB"/dev/twe[0\-9]"\fP or \fB"/dev/twa[0\-9]"\fP: see details
++\fB"/dev/twe[0\-9]"\fP, \fB"/dev/twa[0\-9]"\fP or \fB"/dev/twl[0\-9]"\fP: see details
+ below. For disks behind HighPoint RocketRAID controllers you may need
+ \fB"/dev/sd[a\-z]"\fP.  For disks behind Areca SATA RAID controllers,
+ you need \fB"/dev/sg[2\-9]"\fP (note that smartmontools interacts with
+@@ -303,6 +303,9 @@
+ .nf
+ \fBsmartctl \-a \-d 3ware,1 /dev/twa0\fP
+ .fi
++.nf
++\fBsmartctl \-a \-d 3ware,1 /dev/twl0\fP
++.fi
+ where in the argument \fI3ware,N\fP, the integer N is the disk number
+ (3ware \'port\') within the 3ware ATA RAID controller.  The allowed
+ values of N are from 0 to 127 inclusive.  The first two forms, which
+@@ -314,12 +317,17 @@
+ /dev/twa0\-15, must be used with 3ware 9000 series controllers, which
+ use the 3w\-9xxx driver.
+ 
+-Note that if the special character device nodes /dev/twa? and
+-/dev/twe? do not exist, or exist with the incorrect major or minor
++The devices /dev/twl0\-15 must be used with the 3ware/LSI 9750 series
++controllers which use the 3w-sas driver.
++
++Note that if the special character device nodes /dev/twl?, /dev/twa?
++and /dev/twe? do not exist, or exist with the incorrect major or minor
+ numbers, smartctl will recreate them on the fly.  Typically /dev/twa0
+ refers to the first 9000\-series controller, /dev/twa1 refers to the
+-second 9000 series controller, and so on. Likewise /dev/twe0 refers to
+-the first 6/7/8000\-series controller, /dev/twa1 refers to the second
++second 9000 series controller, and so on. The /dev/twl0 devices refers
++to the first 9750 series controller, /dev/twl1 resfers to the second
++9750 series controller, and so on. Likewise /dev/twe0 refers to
++the first 6/7/8000\-series controller, /dev/twe1 refers to the second
+ 6/7/8000 series controller, and so on.
+ 
+ Note that for the 6/7/8000 controllers, \fBany\fP of the physical
+@@ -354,7 +362,7 @@
+ instructions.  Alternatively, use the character device /dev/twe0\-15 interface.
+ 
+ The selective self\-test functions (\'\-t select,A\-B\') are only supported
+-using the character device interface /dev/twa0\-15 and /dev/twe0\-15.
++using the character device interface /dev/twl0\-15, /dev/twa0\-15 and /dev/twe0\-15.
+ The necessary WRITE LOG commands can not be passed through the SCSI
+ interface.
+ 
+@@ -1688,8 +1696,14 @@
+ .nf
+ .B smartctl \-a \-d 3ware,0 /dev/twa0
+ .fi
+-Examine all SMART data for the first ATA disk connected to a 3ware
+-RAID 9000 controller card.
++Examine all SMART data for the first ATA disk connected to a
++3ware RAID 9000 controller card.
++.PP
++.nf
++.B smartctl \-a \-d 3ware,0 /dev/twl0
++.fi
++Examine all SMART data for the first SATA (not SAS) disk connected to a
++3ware RAID 9750 controller card.
+ .PP
+ .nf
+ .B smartctl \-t short \-d 3ware,3 /dev/sdb
+Index: smartmontools-5.39.1+svn3124/smartd.8.in
+===================================================================
+--- smartmontools-5.39.1+svn3124.orig/smartd.8.in	2010-12-23 11:00:15.000000000 +0100
++++ smartmontools-5.39.1+svn3124/smartd.8.in	2010-12-23 11:06:26.676860226 +0100
+@@ -601,10 +601,17 @@
+ .B #
+ .nf
+ .B # Two ATA disks on a 3ware 9000 controller.
+-.B # Start long self-tests Sundays between  midnight and 
++.B # Start long self-tests Sundays between midnight and
+ .B # 1am and 2-3 am
+ .B \ \ /dev/twa0 -d 3ware,0 -a -s L/../../7/00
+ .B \ \ /dev/twa0 -d 3ware,1 -a -s L/../../7/02
++.nf
++.B #
++.B # Two SATA (not SAS) disks on a 3ware 9750 controller.
++.B # Start long self-tests Sundays between midnight and
++.B # 1am and 2-3 am
++.B \ \ /dev/twl0 -d 3ware,0 -a -s L/../../7/00
++.B \ \ /dev/twl0 -d 3ware,1 -a -s L/../../7/02
+ .B #
+ .nf
+ .B # Monitor 2 disks connected to the first HP SmartArray controller which
+@@ -703,11 +710,11 @@
+ status fails, or if new errors appear in the self-test log.
+ 
+ .B If a 3ware controller is used
+-then the corresponding SCSI (/dev/sd?) or character device (/dev/twe?
+-or /dev/twa?) must be listed, along with the \'\-d 3ware,N\' Directive
+-(see below).  The individual ATA disks hosted by the 3ware controller
+-appear to \fBsmartd\fP as normal ATA devices.  Hence all the ATA
+-directives can be used for these disks (but see note below).
++then the corresponding SCSI (/dev/sd?) or character device (/dev/twe?,
++/dev/twa? or /dev/twl?) must be listed, along with the \'\-d 3ware,N\'
++Directive (see below).  The individual ATA disks hosted by the 3ware
++controller appear to \fBsmartd\fP as normal ATA devices.  Hence all
++the ATA directives can be used for these disks (but see note below).
+ 
+ .B If an Areca controller is used
+ then the corresponding SCSI generic device (/dev/sg?)  must be listed,
+@@ -791,11 +798,11 @@
+ 
+ ATA disks behind 3ware controllers may alternatively be accessed via a
+ character device interface /dev/twe0-15 (3ware 6000/7000/8000
+-controllers) and /dev/twa0-15 (3ware 9000 series controllers).  Note
+-that the 9000 series controllers may \fBonly\fP be accessed using the
+-character device interface /dev/twa0-15 and not the SCSI device
+-interface /dev/sd?.  Please see the \fBsmartctl\fP(8) man page for
+-further details.
++controllers), /dev/twa0-15 (3ware 9000 series controllers) and
++/dev/twl0-15 (3ware 9750 series controllers).  Note that the 9000 series
++controllers may \fBonly\fP be accessed using the character device
++interface /dev/twa0-15 and not the SCSI device interface /dev/sd?.
++Please see the \fBsmartctl\fP(8) man page for further details.
+ 
+ Note that older 3w-xxxx drivers do not pass the \'Enable Autosave\'
+ (\fB-S on\fP) and \'Enable Automatic Offline\' (\fB-o on\fP) commands
+@@ -806,8 +813,8 @@
+ patch to older versions.  See
+ \fBhttp://smartmontools.sourceforge.net/\fP for instructions.
+ Alternatively use the character device interfaces /dev/twe0-15 (3ware
+-6/7/8000 series controllers) or /dev/twa0-15 (3ware 9000 series
+-controllers).
++6/7/8000 series controllers), /dev/twa0-15 (3ware 9000 series
++controllers) or /dev/twl0-15 (3ware 9750 series controllers).
+ 
+ .I areca,N
+ \- the device consists of one or more SATA disks connected to an Areca
+Index: smartmontools-5.39.1+svn3124/smartd.conf
+===================================================================
+--- smartmontools-5.39.1+svn3124.orig/smartd.conf	2010-12-23 11:00:15.000000000 +0100
++++ smartmontools-5.39.1+svn3124/smartd.conf	2010-12-23 11:05:12.107063211 +0100
+@@ -75,12 +75,18 @@
+ #/dev/sdc -d 3ware,2 -a -s L/../../7/03
+ #/dev/sdc -d 3ware,3 -a -s L/../../7/04
+ 
+-# Monitor 2 ATA disks connected to a 3ware 9000 controller which uses
+-# the 3w-9xxx driver (Linux, FreeBSD). Start long self-tests Tuesdays
++# Monitor 2 ATA disks connected to a 3ware 9000 controller which
++# uses the 3w-9xxx driver (Linux, FreeBSD). Start long self-tests Tuesdays
+ # between 1-2 and 3-4 am.
+ #/dev/twa0 -d 3ware,0 -a -s L/../../2/01
+ #/dev/twa0 -d 3ware,1 -a -s L/../../2/03
+ 
++# Monitor 2 SATA (not SAS) disks connected to a 3ware 9000 controller which
++# uses the 3w-sas driver (Linux, FreeBSD). Start long self-tests Tuesdays
++# between 1-2 and 3-4 am.
++#/dev/twl0 -d 3ware,0 -a -s L/../../2/01
++#/dev/twa0 -d 3ware,1 -a -s L/../../2/03
++
+ # Same as above for Windows. Option '-d 3ware,N' is not necessary,
+ # disk (port) number is specified in device name.
+ # NOTE: On Windows, DEVICESCAN works also for 3ware controllers.
+Index: smartmontools-5.39.1+svn3124/smartd.conf.5.in
+===================================================================
+--- smartmontools-5.39.1+svn3124.orig/smartd.conf.5.in	2010-12-23 11:00:15.000000000 +0100
++++ smartmontools-5.39.1+svn3124/smartd.conf.5.in	2010-12-23 11:07:46.278565643 +0100
+@@ -177,12 +177,19 @@
+ .B #
+ .nf
+ .B # Two ATA disks on a 3ware 9000 controller.
+-.B # Start long self-tests Sundays between  midnight and 
++.B # Start long self-tests Sundays between midnight and
+ .B # 1am and 2-3 am
+ .B \ \ /dev/twa0 -d 3ware,0 -a -s L/../../7/00
+ .B \ \ /dev/twa0 -d 3ware,1 -a -s L/../../7/02
+ .B #
+ .nf
++.B # Two SATA (not SAS) disks on a 3ware 9750 controller.
++.B # Start long self-tests Sundays between midnight and
++.B # 1am and 2-3 am
++.B \ \ /dev/twl0 -d 3ware,0 -a -s L/../../7/00
++.B \ \ /dev/twl0 -d 3ware,1 -a -s L/../../7/02
++.B #
++.nf
+ .B # Monitor 2 disks connected to the first HP SmartArray controller which
+ .B # uses the cciss driver. Start long tests on Sunday nights and short
+ .B # self-tests every night and send errors to root
+@@ -279,11 +286,11 @@
+ status fails, or if new errors appear in the self-test log.
+ 
+ .B If a 3ware controller is used
+-then the corresponding SCSI (/dev/sd?) or character device (/dev/twe?
+-or /dev/twa?) must be listed, along with the \'\-d 3ware,N\' Directive
+-(see below).  The individual ATA disks hosted by the 3ware controller
+-appear to \fBsmartd\fP as normal ATA devices.  Hence all the ATA
+-directives can be used for these disks (but see note below).
++then the corresponding SCSI (/dev/sd?) or character device (/dev/twe?,
++/dev/twa? or /dev/twl?) must be listed, along with the \'\-d 3ware,N\'
++Directive (see below).  The individual ATA disks hosted by the 3ware
++controller appear to \fBsmartd\fP as normal ATA devices.  Hence all
++the ATA directives can be used for these disks (but see note below).
+ 
+ .B If an Areca controller is used
+ then the corresponding SCSI generic device (/dev/sg?)  must be listed,
+@@ -367,11 +374,11 @@
+ 
+ ATA disks behind 3ware controllers may alternatively be accessed via a
+ character device interface /dev/twe0-15 (3ware 6000/7000/8000
+-controllers) and /dev/twa0-15 (3ware 9000 series controllers).  Note
+-that the 9000 series controllers may \fBonly\fP be accessed using the
+-character device interface /dev/twa0-15 and not the SCSI device
+-interface /dev/sd?.  Please see the \fBsmartctl\fP(8) man page for
+-further details.
++controllers), /dev/twa0-15 (3ware 9000 series controllers) and
++/dev/twl0-15 (3ware 9750 series controllers).  Note that the 9000 series
++controllers may \fBonly\fP be accessed using the character device
++interface /dev/twa0-15 and not the SCSI device interface /dev/sd?.
++Please see the \fBsmartctl\fP(8) man page for further details.
+ 
+ Note that older 3w-xxxx drivers do not pass the \'Enable Autosave\'
+ (\fB-S on\fP) and \'Enable Automatic Offline\' (\fB-o on\fP) commands
+@@ -382,8 +389,8 @@
+ patch to older versions.  See
+ \fBhttp://smartmontools.sourceforge.net/\fP for instructions.
+ Alternatively use the character device interfaces /dev/twe0-15 (3ware
+-6/7/8000 series controllers) or /dev/twa0-15 (3ware 9000 series
+-controllers).
++6/7/8000 series controllers), /dev/twa0-15 (3ware 9000 series
++controllers) or /dev/twl0-15 (3ware 9750 series controllers).
+ 
+ .I areca,N
+ \- the device consists of one or more SATA disks connected to an Areca

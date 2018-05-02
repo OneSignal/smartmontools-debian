@@ -1,0 +1,14 @@
+Added the removable option by default. This indicates to smartd that it should continue if the device does not appear to be present when smartd is started.
+
+Closes: #406130
+--- a/smartd.conf
++++ b/smartd.conf
+@@ -18,7 +18,7 @@
+ # Directives listed below, which will be applied to all devices that
+ # are found.  Most users should comment out DEVICESCAN and explicitly
+ # list the devices that they wish to monitor.
+-DEVICESCAN -n standby -m root -M exec /usr/share/smartmontools/smartd-runner
++DEVICESCAN -d removable -n standby -m root -M exec /usr/share/smartmontools/smartd-runner
+ 
+ # Alternative setting to ignore temperature and power-on hours reports
+ # in syslog.
